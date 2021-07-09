@@ -2,6 +2,7 @@ package fpinkotlin.chap10_binary_trees
 
 import fpinkotlin.chap08_advanced_lists.MList
 import fpinkotlin.chap07_exceptions.Result
+import kotlin.math.abs
 import kotlin.math.max
 
 sealed class Tree<out A: Comparable<@UnsafeVariance A>>{
@@ -26,6 +27,10 @@ sealed class Tree<out A: Comparable<@UnsafeVariance A>>{
 
     abstract fun merge(tree: Tree<@UnsafeVariance A>): Tree<A>
 
+    internal abstract val value: A
+    internal abstract val left: Tree<A>
+    internal abstract val right: Tree<A>
+
     internal object Empty: Tree<Nothing>() {
         override fun isEmpty(): Boolean = true
         override fun toString(): String = "E"
@@ -48,12 +53,22 @@ sealed class Tree<out A: Comparable<@UnsafeVariance A>>{
         override fun rotateRight(): Tree<Nothing> = this
 
         override fun rotateLeft(): Tree<Nothing> = this
+
+        override val value: Nothing by lazy {
+            throw IllegalStateException("No value in Empty")
+        }
+        override val left: Tree<Nothing> by lazy {
+            throw IllegalStateException("No left in Empty")
+        }
+        override val right: Tree<Nothing> by lazy {
+            throw IllegalStateException("No right in Empty")
+        }
     }
 
     internal class T<out A: Comparable<@UnsafeVariance A>> (
-        internal val left: Tree<A>,
-        internal val value: A,
-        internal val right: Tree<A>): Tree<A>() {
+        override val left: Tree<A>,
+        override val value: A,
+        override val right: Tree<A>): Tree<A>() {
         override fun isEmpty(): Boolean = false
         override fun toString(): String = "(T $left $value $right)"
 
@@ -100,12 +115,15 @@ sealed class Tree<out A: Comparable<@UnsafeVariance A>>{
         override fun <B> foldPostOrder(identity: B, f: (B) -> (B) -> (A) -> B): B =
             f(right.foldPostOrder(identity, f))(left.foldPostOrder(identity, f))(value)
 
-        override fun rotateRight(): Tree<A> {
-            TODO("Not yet implemented")
+        override fun rotateRight(): Tree<A> = when (left) {
+            is Empty -> this
+            is T -> T(left.left, left.value,
+                T(left.right, value, right))
         }
 
-        override fun rotateLeft(): Tree<A> {
-            TODO("Not yet implemented")
+        override fun rotateLeft(): Tree<A> = when (right) {
+            is Empty -> this
+            is T -> T(T(left, value, right.left), right.value, right.right)
         }
     }
 
@@ -158,6 +176,21 @@ sealed class Tree<out A: Comparable<@UnsafeVariance A>>{
             }
         }
 
+//    fun toListInOrderRight(): MList<A> = when (this) {
+//        is Empty -> MList()
+//        is T -> right.toListInOrderRight()
+//            .concat(MList(value))
+//            .concat(left.toListInOrderRight())
+//    } // Will stack overflow
+
+    fun toListInOrderRight(): MList<A> = unBalanceRight(MList(), this)
+
+
+    fun <A: Comparable<A>> isUnBalanced(): Boolean = when (this) {
+        Empty -> false
+        is T -> Math.abs(left.height - right.height) > (this.size - 1) % 2
+    }
+
     companion object {
         operator fun <A: Comparable<A>> invoke(): Tree<A> = Empty
 
@@ -172,6 +205,51 @@ sealed class Tree<out A: Comparable<@UnsafeVariance A>>{
             ordered(right, a, left) -> T(right, a, left)
             else -> Tree(a).merge(left).merge(right)
         }
+
+        private tailrec fun <A: Comparable<A>> unBalanceRight(acc: MList<A>, tree: Tree<A>): MList<A> =
+            when (tree) {
+                Empty -> acc
+                is T -> when (tree.left) {
+                    Empty -> unBalanceRight(acc.cons(tree.value), tree.right)
+                    is T -> unBalanceRight(acc, tree.rotateRight())
+                }
+            }
+
+        fun <A> unfold(a: A, f: (A) -> Result<A>): A {
+            tailrec fun <A> unfold_(a: Pair<Result<A>, Result<A>>, f: (A) -> Result<A>): Pair<Result<A>, Result<A>> {
+                return when (val x = a.second.flatMap { f(it) }) {
+                    is Result.Success -> unfold_(a.second to x, f)
+                    else -> a
+                }
+            }
+            return Result(a).let { unfold_(it to it, f).second.getOrElse(a) }
+        }
+
+        private fun <A: Comparable<A>> balanceFirstLevel(tree: Tree<A>): Tree<A> =
+            unfold(tree) { tr: Tree<A> ->
+                when {
+                    tr.isUnBalanced<A>() -> when {
+                        tree.right.height > tree.left.height -> Result(tr.rotateLeft())
+                        else -> Result(tr.rotateRight())
+                    }
+                    else -> Result()
+                }
+            }
+
+        private fun <A: Comparable<A>> balanceHelper(tree: Tree<A>): Tree<A> = when {
+            !tree.isEmpty() && tree.height > log2nlz(tree.size) -> when {
+                abs(tree.left.height - tree.right.height) > 1 -> balanceHelper(balanceFirstLevel(tree))
+                else -> T(balanceHelper(tree.left), tree.value, balanceFirstLevel(tree.right))
+            }
+            else -> tree
+        }
+
+        fun <A: Comparable<A>> balance(tree: Tree<A>): Tree<A> =
+            balanceHelper(tree.toListInOrderRight().foldLeft(Empty) { t: Tree<A> ->
+                { a: A ->
+                    T(Empty, a, t)
+                }
+            })
     }
 }
 
@@ -203,6 +281,12 @@ fun <A: Comparable<A>> ordered(left: Tree<A>, a: A, right: Tree<A>): Boolean =
                 }
             }.getOrElse(false)) // Just copied from the book
 
+fun log2nlz(n: Int): Int = when (n) {
+    0 -> 0
+    else -> 31 - Integer.numberOfLeadingZeros(n)
+}
+
 fun main() {
-    val tree = Tree<Int>() + 5 + 2 + 8
+    val tree = Tree<Int>() + 3 + 5 + 6 + 9 + 2 + 7 + 1 + 4 + 11
+    println(Tree.balance(tree).toString())
 }

@@ -11,11 +11,15 @@ sealed class MList<out A> {
 
     abstract val length: Int
 
+    abstract fun forEach(ef: (A) -> Unit) // Chap 12.
+
     internal object Nil : MList<Nothing>() {
         override fun isEmpty(): Boolean = true
         override fun toString(): String = "[Nil]"
 
         override val length: Int = 0
+
+        override fun forEach(ef: (Nothing) -> Unit) {}
     }
     internal class Cons<A>(internal val head: A, internal val tail: MList<A>) : MList<A>() {
         override fun isEmpty(): Boolean = false
@@ -27,6 +31,19 @@ sealed class MList<out A> {
         }
 
         override val length: Int = tail.length + 1
+
+        override fun forEach(ef: (A) -> Unit) { // Chap. 12
+            tailrec fun forEach(list: MList<A>) {
+                when (list) {
+                    is Nil -> {}
+                    is Cons -> {
+                        ef(list.head)
+                        forEach(list.tail)
+                    }
+                }
+            }
+            forEach(this)
+        }
     }
 
     fun cons(a: @UnsafeVariance A): MList<A> = Cons(a, this)

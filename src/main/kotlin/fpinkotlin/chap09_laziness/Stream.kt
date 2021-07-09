@@ -73,6 +73,15 @@ sealed class Stream<out A> {
 
         fun from(n: Int): Stream<Int> = unfold(n) { x -> Result(x to (x + 1)) }
 
+        // Chap 12 Ex 12.8
+        fun <A> fill(n: Int, elem: Lazy<A>): Stream<A> {
+            tailrec fun <A> fill(acc: Stream<A>, n: Int, elem: Lazy<A>): Stream<A> = when {
+                n <= 0 -> acc
+                else -> fill(Cons(elem, Lazy { acc }), n - 1, elem)
+            }
+            return fill(Empty, n, elem)
+        }
+
     }
 
     fun takeAtMost(n: Int): Stream<A> = when (this) {

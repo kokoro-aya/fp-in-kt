@@ -15,6 +15,7 @@ sealed class Result<out A>: Serializable {
     abstract fun mapFailure(message: String): Result<A>
 
 //    abstract fun forEach(effect: (A) -> Unit)
+
     abstract fun forEachOrElse(onSuccess: (A) -> Unit = {},
                                onFailure: (Exception) -> Unit = {},
                                onEmpty: () -> Unit = {})
