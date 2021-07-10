@@ -22,12 +22,14 @@ class Worker(id: String): AbstractActor<Pair<Int, Int>>(id) {
 }
 
 class Manager(id: String, list: List<Int>,
-              private val client: Actor<Result<List<Int>>>,
+              private val receiver: Actor<Int>,
               private val workers: Int): AbstractActor<Pair<Int, Int>>(id) {
     private val initial: List<Pair<Int, Int>>
     private val workList: List<Pair<Int, Int>>
     private val resultHeap: Heap<Pair<Int, Int>>
     private val managerFunction: (Manager) -> (Behavior) -> (Pair<Int, Int>) -> Unit
+
+    private val limit: Int
 
     init {
         val splitLists = list.zipWithPosition().splitAt(this.workers)
@@ -37,26 +39,44 @@ class Manager(id: String, list: List<Int>,
             p1: Pair<Int, Int>, p2: Pair<Int, Int> -> p1.second.compareTo(p2.second)
         })
 
+        limit = workList.length
+
         managerFunction = { manager ->
             { behavior ->
                 { p ->
-                    val result = behavior.resultHeap + p
-                    if (result.size == list.length) {
-                        this.client.tell(Result(result.toList().map { it.first }))
+                    val result = streamResult(behavior.resultHeap + p, behavior.expected, List())
+                    result.third.forEach { receiver.tell(it) }
+                    if (result.second > limit) {
+                        this.receiver.tell(-1)
                     } else {
                         manager.context
                             .become(Behavior(behavior.workList
                                 .tailSafe()
-                                .getOrElse(List()), result))
+                                .getOrElse(List()), result.first, result.second))
                     }
                 }
             }
         }
     }
 
+    private fun streamResult(result: Heap<Pair<Int, Int>>, expected: Int, list: List<Int>): Triple<Heap<Pair<Int, Int>>, Int, List<Int>> {
+        val triple = Triple(result, expected, list)
+        val temp = result.head
+            .flatMap { head ->
+                result.tail().map { tail ->
+                    if (head.second == expected)
+                        streamResult(tail, expected + 1, list.cons(head.first))
+                    else
+                        triple
+                }
+            }
+        return temp.getOrElse(triple)
+    }
+
     internal inner class Behavior internal constructor(
         internal val workList: List<Pair<Int, Int>>,
-        internal val resultHeap: Heap<Pair<Int, Int>>): MessageProcessor<Pair<Int, Int>> {
+        internal val resultHeap: Heap<Pair<Int, Int>>,
+        internal val expected: Int): MessageProcessor<Pair<Int, Int>> {
         override fun process(message: Pair<Int, Int>, sender: Result<Actor<Pair<Int, Int>>>) {
             managerFunction(this@Manager)(this@Behavior)(message)
             sender.forEach(onSuccess = { a: Actor<Pair<Int, Int>> ->
@@ -70,8 +90,7 @@ class Manager(id: String, list: List<Int>,
         onReceive(0 to 0, self())
         fpinkotlin.chap13_actor_framework.common.sequence(initial.map { this.initWorker(it) })
             .forEach(onSuccess = { this.initWorkers(it) },
-                     onFailure = {
-                         this.tellClientEmptyResult(it.message ?: "Unknown error")})
+                     onFailure = { receiver.tell(-1) })
 
     }
 
@@ -82,12 +101,42 @@ class Manager(id: String, list: List<Int>,
         lst.forEach { it() }
     }
 
-    private fun tellClientEmptyResult(string: String) {
-        client.tell(Result.failure("$string caused by empty input list."))
-    }
+//    private fun tellClientEmptyResult(string: String) {
+//        receiver.tell(Result.failure("$string caused by empty input list."))
+//    }
 
     override fun onReceive(message: Pair<Int, Int>, sender: Result<Actor<Pair<Int, Int>>>) {
-        context.become(Behavior(workList, resultHeap))
+        context.become(Behavior(workList, resultHeap, 0))
+    }
+}
+
+class Receiver(id: String, private val client: Actor<List<Int>>): AbstractActor<Int>(id) {
+    private val receiverFunction: (Receiver) -> (Behavior) -> (Int) -> Unit
+
+    init {
+        receiverFunction = { receiver ->
+            { behavior ->
+                { i ->
+                    if (i == -1) {
+                        this.client.tell(behavior.resultList.reverse())
+                        shutdown()
+                    } else {
+                        receiver.context
+                            .become(Behavior(behavior.resultList.cons(i)))
+                    }
+                }
+            }
+        }
+    }
+
+    override fun onReceive(i: Int, sender: Result<Actor<Int>>) {
+        context.become(Behavior(List(i)))
+    }
+
+    internal inner class Behavior internal constructor(internal val resultList: List<Int>): MessageProcessor<Int> {
+        override fun process(i: Int, sender: Result<Actor<Int>>) {
+            receiverFunction(this@Receiver)(this@Behavior)(i)
+        }
     }
 }
 
@@ -101,24 +150,17 @@ fun main() {
     semaphore.acquire()
     val startTime = System.currentTimeMillis()
     val client =
-        object : AbstractActor<Result<List<Int>>>("Client") {
-            override fun onReceive(message: Result<List<Int>>,
-                                   sender: Result<Actor<Result<List<Int>>>>) {
-                message.forEach( { processSuccess(it) }, { processFailure(it.message ?: "Unknown error") })
+        object : AbstractActor<List<Int>>("Client") {
+            override fun onReceive(message: List<Int>,
+                                   sender: Result<Actor<List<Int>>>) {
+                println("Input: ${testList.splitAt(40).first}")
+                println("Result: ${message.splitAt(40).first}")
                 println("Total time: " + (System.currentTimeMillis() - startTime))
                 semaphore.release()
             }
         }
-    val manager = Manager("Manager", testList, client, workers)
+    val receiver = Receiver("Receiver", client)
+    val manager = Manager("Manager", testList, receiver, workers)
     manager.start()
     semaphore.acquire()
-}
-
-private fun processFailure(message: String) {
-    println(message)
-}
-
-private fun processSuccess(lst: List<Int>) {
-    println("Input: ${testList.splitAt(40).first}")
-    println("Result: ${lst.splitAt(40).first}")
 }
