@@ -7,3 +7,6 @@ I have done exercises until binary tree. Some code of binary tree were my soluti
 end of the book most of the code aren't my solution.
 
 There are only listings but no exercise in chap 13 and 14.
+
+I have renamed the List to IList and MList, meaning for Immutable List and Memoized Immutable List, this might not be 
+a good decision.
